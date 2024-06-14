@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import requests
-
+import chardet
 import os
 
 # Define the address mappings and normalization functions
@@ -89,18 +89,18 @@ def adjust_cities(df, property_zip_col, property_city_col, mailing_zip_col=None,
     return df
 
 # Streamlit app starts here
-st.title("Address Standardization")
+st.title("Address Standardisation")
 
 # File upload
 uploaded_file = st.file_uploader("Upload your CSV or Excel file", type=['csv', 'xlsx'])
 
-from charset_normalizer import CharsetNormalizerMatches
-
 if uploaded_file is not None:
+    # Detect the encoding
     raw_data = uploaded_file.read()
-    result = CharsetNormalizerMatches.from_bytes(raw_data)
-    encoding = result.best().first().encoding
-    uploaded_file.seek(0)
+    result = chardet.detect(raw_data)
+    encoding = result['encoding']
+    uploaded_file.seek(0)  # Reset the file pointer to the beginning after reading
+
     # Read the file with detected encoding
     try:
         if uploaded_file.name.endswith('.csv'):
