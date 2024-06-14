@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import requests
-import chardet
+
 import os
 
 # Define the address mappings and normalization functions
@@ -94,13 +94,13 @@ st.title("Address Standardization")
 # File upload
 uploaded_file = st.file_uploader("Upload your CSV or Excel file", type=['csv', 'xlsx'])
 
-if uploaded_file is not None:
-    # Detect the encoding
-    raw_data = uploaded_file.read()
-    result = chardet.detect(raw_data)
-    encoding = result['encoding']
-    uploaded_file.seek(0)  # Reset the file pointer to the beginning after reading
+from charset_normalizer import CharsetNormalizerMatches
 
+if uploaded_file is not None:
+    raw_data = uploaded_file.read()
+    result = CharsetNormalizerMatches.from_bytes(raw_data)
+    encoding = result.best().first().encoding
+    uploaded_file.seek(0)
     # Read the file with detected encoding
     try:
         if uploaded_file.name.endswith('.csv'):
