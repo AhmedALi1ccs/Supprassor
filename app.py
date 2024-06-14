@@ -1,8 +1,8 @@
 import streamlit as st
+import chardet
 import pandas as pd
 import re
 import requests
-import chardet
 import os
 
 # Define the address mappings and normalization functions
