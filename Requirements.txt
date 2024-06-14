@@ -1,0 +1,6 @@
+chardet
+pandas
+streamlit
+re
+Requests
+os
