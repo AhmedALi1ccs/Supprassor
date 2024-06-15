@@ -1,5 +1,4 @@
 import streamlit as st
-import chardet
 import pandas as pd
 import re
 import requests
@@ -95,19 +94,13 @@ st.title("Address Standardisation")
 uploaded_file = st.file_uploader("Upload your CSV or Excel file", type=['csv', 'xlsx'])
 
 if uploaded_file is not None:
-    # Detect the encoding
-    raw_data = uploaded_file.read()
-    result = chardet.detect(raw_data)
-    encoding = result['encoding']
-    uploaded_file.seek(0)  # Reset the file pointer to the beginning after reading
-
-    # Read the file with detected encoding
     try:
+        # Read the file assuming UTF-8 encoding
         if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, encoding=encoding)
+            df = pd.read_csv(uploaded_file)
         elif uploaded_file.name.endswith('.xlsx'):
             df = pd.read_excel(uploaded_file)
-        st.write(f"File Uploaded Successfully with {encoding} encoding")
+        st.write("File Uploaded Successfully")
     except Exception as e:
         st.error(f"Failed to read file: {e}")
 
@@ -141,7 +134,7 @@ if uploaded_file is not None:
             
             # Provide a text input for the user to specify the file name
             file_name, file_extension = os.path.splitext(uploaded_file.name)
-            output_file_name = f"{file_name}_standardized{file_extension}"
+            output_file_name = f"{file_name}_standardized{'.csv'}"
             
             # Provide download link for the updated file
             csv = df.to_csv(index=False).encode('utf-8')
