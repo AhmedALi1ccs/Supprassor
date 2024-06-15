@@ -2,16 +2,18 @@ import streamlit as st
 import pandas as pd
 import re
 import requests
+import chardet
 import os
-import openpyxl
-# Define the address mappings and normalization functions
-address_mapping = {
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
+
+# Compile the regex patterns beforehand
+address_patterns = [(re.compile(pattern, re.IGNORECASE), replacement) for pattern, replacement in {
     r'\bavenue\b\.?': 'Ave', r'\bav\b\.?': 'Ave', r'\bave\b\.?': 'Ave',
     r'\bstreet\b\.?': 'St', r'\bstr\b\.?': 'St', r'\bst\b\.?': 'St',
     r'\bboulevard\b\.?': 'Blvd', r'\bblv\b\.?': 'Blvd', r'\bblvd\b\.?': 'Blvd',
-    r'\bRoute\b\.?': 'Rt',
-    r'\bbl\b\.?': 'Blvd', r'\bbl\b\.?': 'Blvd',
-    r'\broad\b\.?': 'Rd', r'\brd\b\.?': 'Rd',
+    r'\broute\b\.?': 'Rt',
+    r'\bbl\b\.?': 'Blvd', r'\broad\b\.?': 'Rd', r'\brd\b\.?': 'Rd',
     r'\bcourt\b\.?': 'Ct', r'\bct\b\.?': 'Ct',
     r'\bdrive\b\.?': 'Dr', r'\bdr\b\.?': 'Dr',
     r'\blane\b\.?': 'Ln', r'\bln\b\.?': 'Ln',
@@ -35,7 +37,7 @@ address_mapping = {
     r'\bwest\b\.?': 'W', r'\bwestern\b\.?': 'W', r'\bw\b\.?': 'W',
     r'\beast\b\.?': 'E', r'\beastern\b\.?': 'E', r'\be\b\.?': 'E',
     r'\bsouth\b\.?': 'S', r'\bsouthern\b\.?': 'S', r'\bs\b\.?': 'S',
-}
+}.items()]
 
 ordinal_mapping = {
     'first': '1st', 'second': '2nd', 'third': '3rd', 'fourth': '4th', 'fifth': '5th',
@@ -47,31 +49,7 @@ ordinal_mapping = {
     'ninetieth': '90th', 'hundredth': '100th'
 }
 
-def ordinal_to_numeric(address):
-    if isinstance(address, str):
-        words = address.split()
-        new_words = [ordinal_mapping.get(word.lower(), word) for word in words]
-        return ' '.join(new_words)
-    return address
-
-def standardize_address(address):
-    if isinstance(address, str):
-        for pattern, replacement in address_mapping.items():
-            address = re.sub(pattern, replacement, address, flags=re.IGNORECASE)
-        return address
-    return address
-
-def normalize_condo_address(address):
-    if isinstance(address, str):
-        parts = address.split()
-        if len(parts) > 2 and parts[-1].isdigit() and parts[0].isdigit():
-            street_number1 = parts[0]
-            street_number2 = parts[-1]
-            street_name = ' '.join(parts[1:-1])
-            return f"{street_number1}-{street_number2} {street_name}"
-        return address
-    return address
-
+@lru_cache(maxsize=128)
 def get_city_from_zip(zip_code):
     url = f"http://api.zippopotam.us/us/{zip_code}"
     response = requests.get(url)
@@ -82,10 +60,40 @@ def get_city_from_zip(zip_code):
     return None
 
 def adjust_cities(df, property_zip_col, property_city_col, mailing_zip_col=None, mailing_city_col=None):
-    df[property_city_col] = df.apply(lambda row: get_city_from_zip(row[property_zip_col]) if get_city_from_zip(row[property_zip_col]) else row[property_city_col], axis=1)
+    def fetch_city_map(zip_codes):
+        with ThreadPoolExecutor() as executor:
+            city_map = {}
+            future_to_zip = {executor.submit(get_city_from_zip, zip_code): zip_code for zip_code in zip_codes}
+            for future in as_completed(future_to_zip):
+                zip_code = future_to_zip[future]
+                city_map[zip_code] = future.result()
+        return city_map
+
+    zip_codes = df[property_zip_col].unique()
+    city_map = fetch_city_map(zip_codes)
+    df[property_city_col] = df[property_zip_col].map(city_map).fillna(df[property_city_col])
+    
     if mailing_zip_col and mailing_city_col:
-        df[mailing_city_col] = df.apply(lambda row: get_city_from_zip(row[mailing_zip_col]) if get_city_from_zip(row[mailing_zip_col]) else row[mailing_city_col], axis=1)
+        mailing_zip_codes = df[mailing_zip_col].unique()
+        mailing_city_map = fetch_city_map(mailing_zip_codes)
+        df[mailing_city_col] = df[mailing_zip_col].map(mailing_city_map).fillna(df[mailing_city_col])
+    
     return df
+
+def standardize_and_normalize_address(address):
+    address = address.lower()
+    for pattern, replacement in address_patterns:
+        address = pattern.sub(replacement, address)
+    words = address.split()
+    new_words = [ordinal_mapping.get(word, word) for word in words]
+    address = ' '.join(new_words)
+    parts = address.split()
+    if len(parts) > 2 and parts[-1].isdigit() and parts[0].isdigit():
+        street_number1 = parts[0]
+        street_number2 = parts[-1]
+        street_name = ' '.join(parts[1:-1])
+        return f"{street_number1}-{street_number2} {street_name}"
+    return address
 
 # Streamlit app starts here
 st.title("Address Standardisation")
@@ -94,13 +102,19 @@ st.title("Address Standardisation")
 uploaded_file = st.file_uploader("Upload your CSV or Excel file", type=['csv', 'xlsx'])
 
 if uploaded_file is not None:
+    # Detect the encoding
+    raw_data = uploaded_file.read()
+    result = chardet.detect(raw_data)
+    encoding = result['encoding']
+    uploaded_file.seek(0)  # Reset the file pointer to the beginning after reading
+
+    # Read the file with detected encoding
     try:
-        # Read the file assuming UTF-8 encoding
         if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
+            df = pd.read_csv(uploaded_file, encoding=encoding)
         elif uploaded_file.name.endswith('.xlsx'):
             df = pd.read_excel(uploaded_file)
-        st.write("File Uploaded Successfully")
+        st.write(f"File Uploaded Successfully with {encoding} encoding")
     except Exception as e:
         st.error(f"Failed to read file: {e}")
 
@@ -117,14 +131,10 @@ if uploaded_file is not None:
 
         if st.button("Normalize Addresses"):
             # Apply the functions to the addresses
-            df[property_address_col] = df[property_address_col].apply(ordinal_to_numeric)
-            df[property_address_col] = df[property_address_col].apply(standardize_address)
-            df[property_address_col] = df[property_address_col].apply(normalize_condo_address)
+            df[property_address_col] = df[property_address_col].apply(standardize_and_normalize_address)
             
             if mailing_address_col != 'None':
-                df[mailing_address_col] = df[mailing_address_col].apply(ordinal_to_numeric)
-                df[mailing_address_col] = df[mailing_address_col].apply(standardize_address)
-                df[mailing_address_col] = df[mailing_address_col].apply(normalize_condo_address)
+                df[mailing_address_col] = df[mailing_address_col].apply(standardize_and_normalize_address)
             
             # Adjust cities
             df = adjust_cities(df, property_zip_col, property_city_col, mailing_zip_col if mailing_zip_col != 'None' else None, mailing_city_col if mailing_city_col != 'None' else None)
@@ -134,7 +144,7 @@ if uploaded_file is not None:
             
             # Provide a text input for the user to specify the file name
             file_name, file_extension = os.path.splitext(uploaded_file.name)
-            output_file_name = f"{file_name}_standardized{'.csv'}"
+            output_file_name = f"{file_name}_standardized.csv"
             
             # Provide download link for the updated file
             csv = df.to_csv(index=False).encode('utf-8')
