@@ -169,47 +169,54 @@ if uploaded_file is not None:
     if 'df' in locals():
         # Map columns automatically
         mapped_columns = map_columns(df, column_mapping_config)
-        
+
         # Check if required columns are mapped
         required_columns = ['property_address', 'property_city', 'property_zip']
         if all(col in mapped_columns for col in required_columns):
             st.write("Mapped Columns: ", mapped_columns)
-            
-            # Apply the functions to the addresses
-            if 'property_address' in mapped_columns:
-                property_address_col = mapped_columns['property_address']
-                df[property_address_col].fillna('', inplace=True)
-                df[property_address_col] = df[property_address_col].apply(standardize_and_normalize_address)
-            
-            if 'mailing_address' in mapped_columns:
-                mailing_address_col = mapped_columns['mailing_address']
-                df[mailing_address_col].fillna('', inplace=True)
-                df[mailing_address_col] = df[mailing_address_col].apply(standardize_and_normalize_address)
-            
-            # Adjust cities
-            df = adjust_cities(df, mapped_columns)
 
-            # Convert relevant columns to title case if they exist
-            for key in ['full_name', 'first_name', 'last_name']:
-                if key in mapped_columns:
-                    df[mapped_columns[key]] = df[mapped_columns[key]].apply(to_title_case)
+            # Allow the user to adjust the mappings
+            st.write("Please confirm or adjust the column mappings:")
+            for key in column_mapping_config.keys():
+                mapped_columns[key] = st.selectbox(f"Select column for {key.replace('_', ' ').title()}:", df.columns, index=df.columns.get_loc(mapped_columns.get(key, df.columns[0])))
 
-            st.write("Addresses Normalized and Names Converted to Name Case Successfully")
-            st.write(df.head())
-            
-            # Provide a text input for the user to specify the file name
-            file_name, file_extension = os.path.splitext(uploaded_file.name)
-            output_file_name = f"{file_name}_standardized.csv"
-            
-            # Provide download link for the updated file
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button("Download Updated File", data=csv, file_name=output_file_name, mime="text/csv")
-            
-            # Instruction for moving the file
-            st.markdown("""
-                **Instructions:**
-                - After downloading, you can manually move the file to your desired location.
-                - To move the file, use your file explorer and drag the downloaded file to the preferred folder.
-            """)
+            # Standardize button
+            if st.button("Standardize"):
+                # Apply the functions to the addresses
+                if 'property_address' in mapped_columns:
+                    property_address_col = mapped_columns['property_address']
+                    df[property_address_col].fillna('', inplace=True)
+                    df[property_address_col] = df[property_address_col].apply(standardize_and_normalize_address)
+
+                if 'mailing_address' in mapped_columns:
+                    mailing_address_col = mapped_columns['mailing_address']
+                    df[mailing_address_col].fillna('', inplace=True)
+                    df[mailing_address_col] = df[mailing_address_col].apply(standardize_and_normalize_address)
+
+                # Adjust cities
+                df = adjust_cities(df, mapped_columns)
+
+                # Convert relevant columns to title case if they exist
+                for key in ['full_name', 'first_name', 'last_name']:
+                    if key in mapped_columns:
+                        df[mapped_columns[key]] = df[mapped_columns[key]].apply(to_title_case)
+
+                st.write("Addresses Normalized and Names Converted to Name Case Successfully")
+                st.write(df.head())
+
+                # Provide a text input for the user to specify the file name
+                file_name, file_extension = os.path.splitext(uploaded_file.name)
+                output_file_name = f"{file_name}_standardized.csv"
+
+                # Provide download link for the updated file
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button("Download Updated File", data=csv, file_name=output_file_name, mime="text/csv")
+
+                # Instruction for moving the file
+                st.markdown("""
+                    **Instructions:**
+                    - After downloading, you can manually move the file to your desired location.
+                    - To move the file, use your file explorer and drag the downloaded file to the preferred folder.
+                """)
         else:
             st.error("Required columns are missing in the uploaded file.")
