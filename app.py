@@ -59,30 +59,74 @@ def get_city_from_zip(zip_code):
             return data['places'][0]['place name']
     return None
 
-def adjust_cities(df, property_zip_col, property_city_col, mailing_zip_col=None, mailing_city_col=None):
-    def fetch_city_map(zip_codes):
-        with ThreadPoolExecutor() as executor:
-            city_map = {}
-            future_to_zip = {executor.submit(get_city_from_zip, zip_code): zip_code for zip_code in zip_codes}
-            for future in as_completed(future_to_zip):
-                zip_code = future_to_zip[future]
-                city_map[zip_code] = future.result()
-        return city_map
+def fetch_city_map(zip_codes):
+    with ThreadPoolExecutor() as executor:
+        city_map = {}
+        future_to_zip = {executor.submit(get_city_from_zip, zip_code): zip_code for zip_code in zip_codes}
+        for future in as_completed(future_to_zip):
+            zip_code = future_to_zip[future]
+            city_map[zip_code] = future.result()
+    return city_map
 
-    zip_codes = df[property_zip_col].unique()
-    city_map = fetch_city_map(zip_codes)
-    df[property_city_col] = df[property_zip_col].map(city_map).fillna(df[property_city_col])
-    
-    if mailing_zip_col and mailing_city_col:
-        mailing_zip_codes = df[mailing_zip_col].unique()
-        mailing_city_map = fetch_city_map(mailing_zip_codes)
-        df[mailing_city_col] = df[mailing_zip_col].map(mailing_city_map).fillna(df[mailing_city_col])
+# Column mapping configuration with variations
+column_mapping_config = {
+    'property_address': ['property address', 'address', 'property_address'],
+    'property_city': ['property city', 'city', 'property_city'],
+    'property_state': ['property state', 'state', 'property_state'],
+    'property_zip': ['property zip', 'property zipcode', 'zip', 'zipcode', 'property_zip', 'property_zipcode'],
+    'mailing_address': ['mailing address', 'owner address', 'mailing_address', 'owner_address'],
+    'mailing_city': ['mailing city', 'owner city', 'mailing_city', 'owner_city'],
+    'mailing_state': ['mailing state', 'owner state', 'mailing_state', 'owner_state'],
+    'mailing_zip': ['mailing zip', 'mailing zipcode', 'owner zip', 'owner zipcode', 'mailing_zip', 'mailing_zipcode', 'owner_zip', 'owner_zipcode'],
+    'full_name': ['full name', 'owner full name', 'first owner full name', 'full_name', 'owner_full_name', 'first_owner_full_name'],
+    'first_name': ['first name', 'owner first name', 'first owner first name', 'first_name', 'owner_first_name', 'first_owner_first_name'],
+    'last_name': ['last name', 'owner last name', 'first owner last name', 'last_name', 'owner_last_name', 'first_owner_last_name']
+}
+
+# Function to standardize column names for easier matching
+def standardize_column_name(name):
+    return re.sub(r'[\s_]+', ' ', name.strip().lower())
+
+# Function to convert text to title case
+def to_title_case(text):
+    if isinstance(text, str):
+        # Split the text into words and capitalize the first letter of each word
+        return ' '.join(word.capitalize() for word in text.split())
+    return text
+
+
+# Function to map columns automatically
+def map_columns(df, config):
+    standardized_columns = {standardize_column_name(col): col for col in df.columns}
+    mapped_columns = {}
+    for key, possible_names in config.items():
+        for name in possible_names:
+            standardized_name = standardize_column_name(name)
+            if standardized_name in standardized_columns:
+                mapped_columns[key] = standardized_columns[standardized_name]
+                break
+    return mapped_columns
+
+def adjust_cities(df, mapped_columns):
+    if 'property_zip' in mapped_columns and 'property_city' in mapped_columns:
+        property_zip_col = mapped_columns['property_zip']
+        property_city_col = mapped_columns['property_city']
+        
+        zip_codes = df[property_zip_col].unique()
+        city_map = fetch_city_map(zip_codes)
+        df[property_city_col] = df[property_zip_col].map(city_map).fillna(df[property_city_col])
+        
+        if 'mailing_zip' in mapped_columns and 'mailing_city' in mapped_columns:
+            mailing_zip_col = mapped_columns['mailing_zip']
+            mailing_city_col = mapped_columns['mailing_city']
+            mailing_zip_codes = df[mailing_zip_col].unique()
+            mailing_city_map = fetch_city_map(mailing_zip_codes)
+            df[mailing_city_col] = df[mailing_zip_col].map(mailing_city_map).fillna(df[mailing_city_col])
     
     return df
 
 def standardize_and_normalize_address(address):
     if isinstance(address, str):
-          
         address = address.lower()
         for pattern, replacement in address_patterns:
             address = pattern.sub(replacement, address)
@@ -95,10 +139,10 @@ def standardize_and_normalize_address(address):
             street_number2 = parts[-1]
             street_name = ' '.join(parts[1:-1])
             return f"{street_number1}-{street_number2} {street_name}"
-        
     else:
-        address=' '
+        address = ''
     return address
+
 # Streamlit app starts here
 st.title("Address Standardisation")
 
@@ -123,29 +167,34 @@ if uploaded_file is not None:
         st.error(f"Failed to read file: {e}")
 
     if 'df' in locals():
-        # Select columns for property address and city
-        property_address_col = st.selectbox("Select the column for Property Address", df.columns)
-        property_city_col = st.selectbox("Select the column for Property City", df.columns)
-        property_zip_col = st.selectbox("Select the column for Property Zip Code", df.columns)
+        # Map columns automatically
+        mapped_columns = map_columns(df, column_mapping_config)
         
-        # Select columns for mailing address and city (optional)
-        mailing_address_col = st.selectbox("Select the column for Mailing Address (Optional)", ['None'] + list(df.columns))
-        mailing_city_col = st.selectbox("Select the column for Mailing City (Optional)", ['None'] + list(df.columns))
-        mailing_zip_col = st.selectbox("Select the column for Mailing Zip Code (Optional)", ['None'] + list(df.columns))
-
-        if st.button("Normalize Addresses"):
+        # Check if required columns are mapped
+        required_columns = ['property_address', 'property_city', 'property_zip']
+        if all(col in mapped_columns for col in required_columns):
+            st.write("Mapped Columns: ", mapped_columns)
+            
             # Apply the functions to the addresses
-            df[property_address_col].fillna('', inplace=True)
+            if 'property_address' in mapped_columns:
+                property_address_col = mapped_columns['property_address']
+                df[property_address_col].fillna('', inplace=True)
+                df[property_address_col] = df[property_address_col].apply(standardize_and_normalize_address)
             
-            df[property_address_col] = df[property_address_col].apply(standardize_and_normalize_address)
-            
-            if mailing_address_col != 'None':
+            if 'mailing_address' in mapped_columns:
+                mailing_address_col = mapped_columns['mailing_address']
+                df[mailing_address_col].fillna('', inplace=True)
                 df[mailing_address_col] = df[mailing_address_col].apply(standardize_and_normalize_address)
-                df[mailing_address_col].fillna('',inplace=True)
+            
             # Adjust cities
-            df = adjust_cities(df, property_zip_col, property_city_col, mailing_zip_col if mailing_zip_col != 'None' else None, mailing_city_col if mailing_city_col != 'None' else None)
+            df = adjust_cities(df, mapped_columns)
 
-            st.write("Addresses Normalized Successfully")
+            # Convert relevant columns to title case if they exist
+            for key in ['full_name', 'first_name', 'last_name']:
+                if key in mapped_columns:
+                    df[mapped_columns[key]] = df[mapped_columns[key]].apply(to_title_case)
+
+            st.write("Addresses Normalized and Names Converted to Name Case Successfully")
             st.write(df.head())
             
             # Provide a text input for the user to specify the file name
@@ -162,3 +211,5 @@ if uploaded_file is not None:
                 - After downloading, you can manually move the file to your desired location.
                 - To move the file, use your file explorer and drag the downloaded file to the preferred folder.
             """)
+        else:
+            st.error("Required columns are missing in the uploaded file.")
