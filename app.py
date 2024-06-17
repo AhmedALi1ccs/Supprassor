@@ -81,20 +81,24 @@ def adjust_cities(df, property_zip_col, property_city_col, mailing_zip_col=None,
     return df
 
 def standardize_and_normalize_address(address):
-    address = address.lower()
-    for pattern, replacement in address_patterns:
-        address = pattern.sub(replacement, address)
-    words = address.split()
-    new_words = [ordinal_mapping.get(word, word) for word in words]
-    address = ' '.join(new_words)
-    parts = address.split()
-    if len(parts) > 2 and parts[-1].isdigit() and parts[0].isdigit():
-        street_number1 = parts[0]
-        street_number2 = parts[-1]
-        street_name = ' '.join(parts[1:-1])
-        return f"{street_number1}-{street_number2} {street_name}"
+    if isinstance(address, str):
+          
+        address = address.lower()
+        for pattern, replacement in address_patterns:
+            address = pattern.sub(replacement, address)
+        words = address.split()
+        new_words = [ordinal_mapping.get(word, word) for word in words]
+        address = ' '.join(new_words)
+        parts = address.split()
+        if len(parts) > 2 and parts[-1].isdigit() and parts[0].isdigit():
+            street_number1 = parts[0]
+            street_number2 = parts[-1]
+            street_name = ' '.join(parts[1:-1])
+            return f"{street_number1}-{street_number2} {street_name}"
+        
+    else:
+        address=' '
     return address
-
 # Streamlit app starts here
 st.title("Address Standardisation")
 
@@ -131,11 +135,13 @@ if uploaded_file is not None:
 
         if st.button("Normalize Addresses"):
             # Apply the functions to the addresses
+            df[property_address_col].fillna('', inplace=True)
+            
             df[property_address_col] = df[property_address_col].apply(standardize_and_normalize_address)
             
             if mailing_address_col != 'None':
                 df[mailing_address_col] = df[mailing_address_col].apply(standardize_and_normalize_address)
-            
+                df[mailing_address_col].fillna('',inplace=True)
             # Adjust cities
             df = adjust_cities(df, property_zip_col, property_city_col, mailing_zip_col if mailing_zip_col != 'None' else None, mailing_city_col if mailing_city_col != 'None' else None)
 
