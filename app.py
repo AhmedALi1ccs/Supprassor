@@ -4,7 +4,8 @@ import re
 import requests
 import chardet
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
+import aiohttp
 from functools import lru_cache
 
 # Compile the regex patterns beforehand
@@ -59,13 +60,25 @@ def get_city_from_zip(zip_code):
             return data['places'][0]['place name']
     return None
 
+async def fetch_city(session, zip_code):
+    url = f"http://api.zippopotam.us/us/{zip_code}"
+    async with session.get(url) as response:
+        if response.status == 200:
+            data = await response.json()
+            if 'places' in data and len(data['places']) > 0:
+                return zip_code, data['places'][0]['place name']
+    return zip_code, None
+
+async def fetch_city_map_async(zip_codes):
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_city(session, zip_code) for zip_code in zip_codes]
+        results = await asyncio.gather(*tasks)
+        return {zip_code: city for zip_code, city in results}
+
 def fetch_city_map(zip_codes):
-    with ThreadPoolExecutor() as executor:
-        city_map = {}
-        future_to_zip = {executor.submit(get_city_from_zip, zip_code): zip_code for zip_code in zip_codes}
-        for future in as_completed(future_to_zip):
-            zip_code = future_to_zip[future]
-            city_map[zip_code] = future.result()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    city_map = loop.run_until_complete(fetch_city_map_async(zip_codes))
     return city_map
 
 # Column mapping configuration with variations
@@ -94,7 +107,6 @@ def to_title_case(text):
         return ' '.join(word.capitalize() for word in text.split())
     return text
 
-
 # Function to map columns automatically
 def map_columns(df, config):
     standardized_columns = {standardize_column_name(col): col for col in df.columns}
@@ -105,23 +117,28 @@ def map_columns(df, config):
             if standardized_name in standardized_columns:
                 mapped_columns[key] = standardized_columns[standardized_name]
                 break
+        else:
+            mapped_columns[key] = 'none'
     return mapped_columns
 
 def adjust_cities(df, mapped_columns):
-    if 'property_zip' in mapped_columns and 'property_city' in mapped_columns:
+    if mapped_columns['property_zip'] != 'none' and mapped_columns['property_city'] != 'none':
         property_zip_col = mapped_columns['property_zip']
         property_city_col = mapped_columns['property_city']
         
         zip_codes = df[property_zip_col].unique()
         city_map = fetch_city_map(zip_codes)
-        df[property_city_col] = df[property_zip_col].map(city_map).fillna(df[property_city_col])
         
-        if 'mailing_zip' in mapped_columns and 'mailing_city' in mapped_columns:
-            mailing_zip_col = mapped_columns['mailing_zip']
-            mailing_city_col = mapped_columns['mailing_city']
-            mailing_zip_codes = df[mailing_zip_col].unique()
-            mailing_city_map = fetch_city_map(mailing_zip_codes)
-            df[mailing_city_col] = df[mailing_zip_col].map(mailing_city_map).fillna(df[mailing_city_col])
+        df[property_city_col] = df[property_zip_col].map(city_map).fillna(df[property_city_col])
+
+    if mapped_columns['mailing_zip'] != 'none' and mapped_columns['mailing_city'] != 'none':
+        mailing_zip_col = mapped_columns['mailing_zip']
+        mailing_city_col = mapped_columns['mailing_city']
+        
+        zip_codes = df[mailing_zip_col].unique()
+        city_map = fetch_city_map(zip_codes)
+        
+        df[mailing_city_col] = df[mailing_zip_col].map(city_map).fillna(df[mailing_city_col])
     
     return df
 
@@ -139,8 +156,6 @@ def standardize_and_normalize_address(address):
             street_number2 = parts[-1]
             street_name = ' '.join(parts[1:-1])
             return f"{street_number1}-{street_number2} {street_name}"
-    else:
-        address = ''
     return address
 
 # Streamlit app starts here
@@ -178,17 +193,19 @@ if uploaded_file is not None:
             # Allow the user to adjust the mappings
             st.write("Please confirm or adjust the column mappings:")
             for key in column_mapping_config.keys():
-                mapped_columns[key] = st.selectbox(f"Select column for {key.replace('_', ' ').title()}:", df.columns, index=df.columns.get_loc(mapped_columns.get(key, df.columns[0])))
+                options = ['none'] + list(df.columns)
+                default_index = options.index(mapped_columns.get(key)) if mapped_columns.get(key) in options else 0
+                mapped_columns[key] = st.selectbox(f"Select column for {key.replace('_', ' ').title()}:", options, index=default_index)
 
             # Standardize button
             if st.button("Standardize"):
                 # Apply the functions to the addresses
-                if 'property_address' in mapped_columns:
+                if mapped_columns.get('property_address') != 'none':
                     property_address_col = mapped_columns['property_address']
                     df[property_address_col].fillna('', inplace=True)
                     df[property_address_col] = df[property_address_col].apply(standardize_and_normalize_address)
 
-                if 'mailing_address' in mapped_columns:
+                if mapped_columns.get('mailing_address') != 'none':
                     mailing_address_col = mapped_columns['mailing_address']
                     df[mailing_address_col].fillna('', inplace=True)
                     df[mailing_address_col] = df[mailing_address_col].apply(standardize_and_normalize_address)
@@ -198,7 +215,7 @@ if uploaded_file is not None:
 
                 # Convert relevant columns to title case if they exist
                 for key in ['full_name', 'first_name', 'last_name']:
-                    if key in mapped_columns:
+                    if key in mapped_columns and mapped_columns[key] != 'none':
                         df[mapped_columns[key]] = df[mapped_columns[key]].apply(to_title_case)
 
                 st.write("Addresses Normalized and Names Converted to Name Case Successfully")
