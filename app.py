@@ -1,12 +1,13 @@
+import requests
 import streamlit as st
 import pandas as pd
 import re
-import requests
+import aiohttp
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 import chardet
 import os
-import asyncio
-import aiohttp
-from functools import lru_cache
 
 # Compile the regex patterns beforehand
 address_patterns = [(re.compile(pattern, re.IGNORECASE), replacement) for pattern, replacement in {
@@ -69,9 +70,13 @@ async def fetch_city(session, zip_code):
                 return zip_code, data['places'][0]['place name']
     return zip_code, None
 
-async def fetch_city_map_async(zip_codes):
+async def fetch_city_map_async(zip_codes, max_concurrent_tasks=100):
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch_city(session, zip_code) for zip_code in zip_codes]
+        semaphore = asyncio.Semaphore(max_concurrent_tasks)
+        async def fetch_with_sem(zip_code):
+            async with semaphore:
+                return await fetch_city(session, zip_code)
+        tasks = [fetch_with_sem(zip_code) for zip_code in zip_codes]
         results = await asyncio.gather(*tasks)
         return {zip_code: city for zip_code, city in results}
 
@@ -83,15 +88,15 @@ def fetch_city_map(zip_codes):
 
 # Column mapping configuration with variations
 column_mapping_config = {
-    'property_address': ['property address', 'address', 'property_address'],
+    'property_address': ['property address', 'address', 'property_address','site address'],
     'property_city': ['property city', 'city', 'property_city'],
     'property_state': ['property state', 'state', 'property_state'],
-    'property_zip': ['property zip', 'property zipcode', 'zip', 'zipcode', 'property_zip', 'property_zipcode'],
+    'property_zip': ['property zip', 'property zipcode', 'zip', 'zipcode', 'property_zip', 'property_zipcode','zip code'],
     'mailing_address': ['mailing address', 'owner address', 'mailing_address', 'owner_address'],
     'mailing_city': ['mailing city', 'owner city', 'mailing_city', 'owner_city'],
     'mailing_state': ['mailing state', 'owner state', 'mailing_state', 'owner_state'],
     'mailing_zip': ['mailing zip', 'mailing zipcode', 'owner zip', 'owner zipcode', 'mailing_zip', 'mailing_zipcode', 'owner_zip', 'owner_zipcode'],
-    'full_name': ['full name', 'owner full name', 'first owner full name', 'full_name', 'owner_full_name', 'first_owner_full_name'],
+    'full_name': ['full name', 'owner full name', 'first owner full name', 'full_name', 'owner_full_name', 'first_owner_full_name','owner contact name'],
     'first_name': ['first name', 'owner first name', 'first owner first name', 'first_name', 'owner_first_name', 'first_owner_first_name'],
     'last_name': ['last name', 'owner last name', 'first owner last name', 'last_name', 'owner_last_name', 'first_owner_last_name']
 }
@@ -121,25 +126,35 @@ def map_columns(df, config):
             mapped_columns[key] = 'none'
     return mapped_columns
 
+# Function to adjust cities based on ZIP codes
 def adjust_cities(df, mapped_columns):
+    def clean_zip(zip_code):
+        return str(zip_code).replace(',', '').replace('.0', '')
+
     if mapped_columns['property_zip'] != 'none' and mapped_columns['property_city'] != 'none':
         property_zip_col = mapped_columns['property_zip']
         property_city_col = mapped_columns['property_city']
-        
+
+        # Clean and convert the property ZIP codes to strings
+        df[property_zip_col] = df[property_zip_col].apply(clean_zip)
+
         zip_codes = df[property_zip_col].unique()
         city_map = fetch_city_map(zip_codes)
-        
+
         df[property_city_col] = df[property_zip_col].map(city_map).fillna(df[property_city_col])
 
     if mapped_columns['mailing_zip'] != 'none' and mapped_columns['mailing_city'] != 'none':
         mailing_zip_col = mapped_columns['mailing_zip']
         mailing_city_col = mapped_columns['mailing_city']
-        
+
+        # Clean and convert the mailing ZIP codes to strings
+        df[mailing_zip_col] = df[mailing_zip_col].apply(clean_zip)
+
         zip_codes = df[mailing_zip_col].unique()
         city_map = fetch_city_map(zip_codes)
-        
+
         df[mailing_city_col] = df[mailing_zip_col].map(city_map).fillna(df[mailing_city_col])
-    
+
     return df
 
 def standardize_and_normalize_address(address):
