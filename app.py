@@ -39,6 +39,7 @@ address_patterns = [(re.compile(pattern, re.IGNORECASE), replacement) for patter
     r'\bwest\b\.?': 'W', r'\bwestern\b\.?': 'W', r'\bw\b\.?': 'W',
     r'\beast\b\.?': 'E', r'\beastern\b\.?': 'E', r'\be\b\.?': 'E',
     r'\bsouth\b\.?': 'S', r'\bsouthern\b\.?': 'S', r'\bs\b\.?': 'S',
+    r'\#\b\.?': '',
 }.items()]
 
 ordinal_mapping = {
