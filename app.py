@@ -35,12 +35,17 @@ address_patterns = [(re.compile(pattern, re.IGNORECASE), replacement) for patter
     r'\bcrossing\b\.?': 'Xing', r'\bxing\b\.?': 'Xing',
     r'\bfort\b\.?': 'Ft', r'\bft\b\.?': 'Ft',
     r'\bcreek\b\.?': 'Crk', r'\bcrk\b\.?': 'Crk',
+
+    
+    
+    
+}.items()]
+directional_patterns = {re.compile(pattern, re.IGNORECASE): replacement for pattern, replacement in {
     r'\bnorth\b\.?': 'N', r'\bnorthern\b\.?': 'N', r'\bn\b\.?': 'N',
     r'\bwest\b\.?': 'W', r'\bwestern\b\.?': 'W', r'\bw\b\.?': 'W',
     r'\beast\b\.?': 'E', r'\beastern\b\.?': 'E', r'\be\b\.?': 'E',
-    r'\bsouth\b\.?': 'S', r'\bsouthern\b\.?': 'S', r'\bs\b\.?': 'S',
-    r'\#\b\.?': '',
-}.items()]
+    r'\bsouth\b\.?': 'S', r'\bsouthern\b\.?': 'S', r'\bs\b\.?': 'S'
+}.items()}
 
 ordinal_mapping = {
     'first': '1st', 'second': '2nd', 'third': '3rd', 'fourth': '4th', 'fifth': '5th',
@@ -89,10 +94,10 @@ def fetch_city_map(zip_codes):
 
 # Column mapping configuration with variations
 column_mapping_config = {
-    'property_address': ['property address', 'address', 'property_address','site address'],
+    'property_address': ['property address', 'address', 'property_address','site address',"Street"],
     'property_city': ['property city', 'city', 'property_city'],
     'property_state': ['property state', 'state', 'property_state'],
-    'property_zip': ['property zip', 'property zipcode', 'zip', 'zipcode', 'property_zip', 'property_zipcode','zip code'],
+    'property_zip': ['property zip', 'property zipcode', 'zip', 'zipcode', 'property_zip', 'property_zipcode','zip code',"PostalCode"],
     'mailing_address': ['mailing address', 'owner address', 'mailing_address', 'owner_address'],
     'mailing_city': ['mailing city', 'owner city', 'mailing_city', 'owner_city'],
     'mailing_state': ['mailing state', 'owner state', 'mailing_state', 'owner_state'],
@@ -158,24 +163,69 @@ def adjust_cities(df, mapped_columns):
 
     return df
 
+
+# Function to standardize and normalize address, ensuring the second suffix is replaced
 def standardize_and_normalize_address(address):
     if isinstance(address, str):
+        address = re.sub(r'\s*#\s*(?=\d*\s|$)', ' ', address)
         address = address.lower()
-        for pattern, replacement in address_patterns:
-            address = pattern.sub(replacement, address)
         words = address.split()
-        new_words = [ordinal_mapping.get(word, word) for word in words]
-        address = ' '.join(new_words)
-        parts = address.split()
-        if len(parts) > 2 and parts[-1].isdigit() and parts[0].isdigit():
-            street_number1 = parts[0]
-            street_number2 = parts[-1]
-            street_name = ' '.join(parts[1:-1])
-            return f"{street_number1}-{street_number2} {street_name}"
+
+        # Replace ordinal words with their numeric equivalents
+        words = [ordinal_mapping.get(word, word) for word in words]
+
+        # Track replacements of address patterns
+        suffix_count = 0
+        address_indices = []
+
+        # Check and replace address patterns
+        for i, word in enumerate(words):
+            for pattern, replacement in address_patterns:
+                if pattern.match(word):
+                    address_indices.append(i)
+                    break
+
+        # Replace the second address pattern if it exists, otherwise replace the single occurrence
+        if len(address_indices) > 1:
+            index_to_replace = address_indices[1]
+        elif len(address_indices) == 1:
+            index_to_replace = address_indices[0]
+        else:
+            index_to_replace = None
+
+        if index_to_replace is not None:
+            for pattern, replacement in address_patterns:
+                if pattern.match(words[index_to_replace]):
+                    # Skip replacement if "Highway" is followed by a number
+                    if pattern.pattern == r'\bhighway\b\.?' and index_to_replace + 1 < len(words) and words[index_to_replace + 1].isdigit():
+                        continue
+                    words[index_to_replace] = pattern.sub(replacement, words[index_to_replace])
+                    break
+
+        # Replace directional patterns unless followed by an address pattern
+        for i, word in enumerate(words):
+            for pattern, replacement in directional_patterns.items():
+                if pattern.match(word):
+                    # Check if the next word is an address pattern
+                    if i + 1 < len(words):
+                        next_word = words[i + 1]
+                        if any(addr_pattern.match(next_word) for addr_pattern, _ in address_patterns):
+                            continue  # Skip replacing if followed by an address pattern
+                    words[i] = pattern.sub(replacement, words[i])
+                    break
+
+        # Reconstruct the address
+        address = ' '.join(words)
+        
     return address
 
+
+
+# Rest of the Streamlit app code remains unchanged...
+
+
 # Streamlit app starts here
-st.title("Address Standardisation")
+st.title("Address Normalization and ZIP Code Adjustment")
 
 # File upload
 uploaded_file = st.file_uploader("Upload your CSV or Excel file", type=['csv', 'xlsx'])
@@ -253,3 +303,4 @@ if uploaded_file is not None:
                 """)
         else:
             st.error("Required columns are missing in the uploaded file.")
+
