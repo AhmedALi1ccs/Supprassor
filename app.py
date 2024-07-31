@@ -94,10 +94,10 @@ def fetch_city_map(zip_codes):
 
 # Column mapping configuration with variations
 column_mapping_config = {
-    'property_address': ['property address', 'address', 'property_address','site address',"Street"],
+    'property_address': ['property address', 'address', 'property_address','site address',"Street","street_address"],
     'property_city': ['property city', 'city', 'property_city'],
-    'property_state': ['property state', 'state', 'property_state'],
-    'property_zip': ['property zip', 'property zipcode', 'zip', 'zipcode', 'property_zip', 'property_zipcode','zip code',"PostalCode"],
+    'property_state': ['property state', 'state', 'property_state',"region"],
+    'property_zip': ['property zip', 'property zipcode', 'zip', 'zipcode', 'property_zip', 'property_zipcode','zip code',"PostalCode","postal_code"],
     'mailing_address': ['mailing address', 'owner address', 'mailing_address', 'owner_address'],
     'mailing_city': ['mailing city', 'owner city', 'mailing_city', 'owner_city'],
     'mailing_state': ['mailing state', 'owner state', 'mailing_state', 'owner_state'],
@@ -303,4 +303,3 @@ if uploaded_file is not None:
                 """)
         else:
             st.error("Required columns are missing in the uploaded file.")
-
