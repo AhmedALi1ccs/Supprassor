@@ -15,7 +15,7 @@ import psycopg2
 import os
 from dotenv import load_dotenv
 
-
+st.cache_resource.clear()
 # Load environment variables
 load_dotenv()
 def initialize_hits(conn):
